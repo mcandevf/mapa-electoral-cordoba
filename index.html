@@ -1,0 +1,1057 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mapa Electoral - Córdoba Capital</title>
+
+    <!-- React -->
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    ></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Leaflet Markercluster (opcional) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.Default.css"
+    />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.1/dist/leaflet.markercluster.js"></script>
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+          "Ubuntu", "Cantarell", sans-serif;
+      }
+
+      /* Estilo para mapa Leaflet */
+      #map {
+        width: 100%;
+        height: min(68vh, 720px);
+        min-height: 520px;
+        border-radius: 8px;
+        z-index: 1;
+      }
+
+      .leaflet-interactive {
+        cursor: pointer;
+      }
+
+      /* Popup personalizado */
+      .leaflet-popup-content {
+        font-size: 12px;
+      }
+
+      .leaflet-popup-content-wrapper {
+        border-radius: 8px;
+        border: 2px solid #112687;
+      }
+
+      /* Tooltip */
+      .leaflet-tooltip {
+        background-color: rgba(4, 15, 68, 0.9);
+        border: none;
+        border-radius: 4px;
+        color: white;
+        font-weight: bold;
+        font-size: 12px;
+      }
+
+      /* Layers control */
+      .leaflet-control-layers {
+        border-radius: 8px;
+      }
+
+      /* Scrollbar personalizado */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.1);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.5);
+      }
+
+      /* Info box */
+      .info {
+        padding: 6px 8px;
+        font:
+          14px/16px Arial,
+          Helvetica,
+          sans-serif;
+        background: white;
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+        border-radius: 5px;
+      }
+
+      .info h4 {
+        margin: 0 0 5px 0;
+        color: #112687;
+      }
+
+      /* Legend */
+      .legend {
+        background: white;
+        padding: 10px;
+        border-radius: 5px;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+        font-size: 11px;
+      }
+
+      .legend i {
+        width: 18px;
+        height: 18px;
+        float: left;
+        margin-right: 8px;
+        opacity: 0.7;
+      }
+      .seccional-label {
+        pointer-events: none;
+        text-align: center;
+      }
+      .seccional-label span {
+        display: inline-block;
+        white-space: nowrap;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.88);
+        color: #1f2937;
+        font:
+          600 11px/20px Arial,
+          sans-serif;
+        box-shadow: 0 1px 4px #0002;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- ========================================
+         COMPONENTE REACT CON MAPA LEAFLET
+    ======================================== -->
+    <script type="text/babel">
+      const { useState, useEffect, useRef } = React;
+
+      // RESULTADOS DE CAPITAL: editar resultado_capital dentro de datos_electorales.json.
+      // primero/segundo: partido, votos y porcentaje (42 significa 42 %).
+      // participacion: fracción (0.75 significa 75 %); mesas: cantidad entera.
+      // Los resultados mostrados y Exportar usan la misma fuente.
+      const ANIOS = ["2011", "2015", "2019", "2023"];
+      const porcentaje = (n, decimales = 2) => Number.isFinite(n)
+        ? n.toLocaleString("es-AR", { minimumFractionDigits: decimales, maximumFractionDigits: decimales }) + " %"
+        : "Sin datos";
+      const numero = n => Number.isFinite(n) ? n.toLocaleString("es-AR") : "Sin datos";
+      const datosExportables = datos => Object.fromEntries(ANIOS.filter(y => datos[y]).map(y => [y, datos[y]]));
+      const ordenarCircuitos = (seccionales, orden) => {
+        const filas = Object.entries(seccionales);
+        if (!orden.campo) return filas;
+        return filas.sort((a,b) => {
+          const x=a[1][orden.campo], y=b[1][orden.campo];
+          const vx=Number.isFinite(x), vy=Number.isFinite(y);
+          if (!vx || !vy) return vx ? -1 : vy ? 1 : a[0].localeCompare(b[0], "es", {numeric:true});
+          return (orden.direccion === "desc" ? y-x : x-y) || a[0].localeCompare(b[0], "es", {numeric:true});
+        });
+      };
+      const EncabezadoOrdenable = ({campo, titulo, orden, ordenar}) => (
+        <th className="p-2 text-right" aria-sort={orden.campo === campo ? (orden.direccion === "desc" ? "descending" : "ascending") : "none"}>
+          <button className="font-bold rounded px-1 py-2 hover:bg-gray-200 focus:ring-2 focus:ring-blue-500" onClick={() => ordenar(campo)}>
+            {titulo} {orden.campo === campo ? (orden.direccion === "desc" ? "↓" : "↑") : "↕"}
+          </button>
+        </th>
+      );
+
+      // ===== EDITAR COLORES DE PARTIDOS AQUI =====
+      // Este único bloque controla tabla, resultados y comparador.
+      // Agregá una línea por partido: "NOMBRE EXACTO DEL PARTIDO": "#HEX",
+      // Copiá el nombre tal como aparece en los resultados (incluidas tildes).
+      // Si no está en esta lista, se verá gris (#cccccc).
+      // Los colores territoriales del mapa se editan aparte, en coloresSeccionales.
+      const COLORES_PARTIDOS = {
+        "ALIANZA LA LIBERTAD AVANZA": "#f0b20a",
+        "ALIANZA PROVINCIAS UNIDAS": "#0066cc",
+        "DEFENDAMOS CÓRDOBA": "#00cc66",
+        "ALIANZA FUERZA PATRIA": "#cc0000",
+        "UNIÓN CÍVICA RADICAL": "#ffcc00",
+        "FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD": "#ff0000",
+        "HACEMOS UNIDOS POR CORDOBA": "#112687",
+        "JUNTOS POR EL CAMBIO": "#0099ff",
+        "LA LIBERTAD AVANZA": "#f0b20a",
+        "FRENTE CIVICO": "#00cc66",
+        POPULAR: "#ff6600",
+        "HACEMOS POR CORDOBA": "#112687",
+        "CORDOBA CAMBIA": "#0099ff",
+        // Partidos ganadores de elecciones anteriores.
+        "UNION POR CORDOBA": "#112687",
+        "UNIÓN POR CÓRDOBA": "#112687",
+        "JUNTOS POR CORDOBA": "#0099ff",
+      };
+
+      const obtenerColor = (ganador) => COLORES_PARTIDOS[ganador] || "#cccccc";
+      // ===== FIN COLORES DE PARTIDOS =====
+
+      const normalizarCircuito = (id) =>
+        String(id ?? "")
+          .split("|")[0]
+          .trim()
+          .toUpperCase()
+          .replace(/^SECCIONAL\s+/, "")
+          .replace(/^0+(?=\d)/, "");
+      const seccionalDe = (id) =>
+        normalizarCircuito(id).match(/^\d+/)?.[0] || null;
+      const nombreCircuito = (id, nombre) =>
+        normalizarCircuito(id) +
+        " | " +
+        String(nombre ?? "")
+          .split("|")
+          .pop()
+          .trim();
+      const coloresSeccionales = [
+        "#2563eb",
+        "#d97706",
+        "#059669",
+        "#9333ea",
+        "#dc2626",
+        "#0891b2",
+        "#be185d",
+        "#65a30d",
+        "#7c3aed",
+        "#ea580c",
+        "#0f766e",
+        "#b45309",
+        "#475569",
+        "#db2777",
+      ];
+      const colorSeccional = (id) => {
+        const n = seccionalDe(id);
+        return n
+          ? coloresSeccionales[(Number(n) - 1) % coloresSeccionales.length]
+          : "#94a3b8";
+      };
+
+      // Componente para renderizar con Leaflet
+      const MapComponent = ({
+        geojson,
+        datos,
+        year,
+        seccionalSeleccionada,
+        onSeccionalSelect,
+        modo = "seccionales",
+        mostrarRotulos = true,
+      }) => {
+        const mapContainer = useRef(null);
+        const map = useRef(null);
+        const geoJsonLayer = useRef(null);
+        const labelsLayer = useRef(null);
+
+        useEffect(
+          () => () => {
+            map.current?.remove();
+            map.current = null;
+            geoJsonLayer.current = null;
+            labelsLayer.current = null;
+          },
+          [],
+        );
+
+        const encontrarSeccional = (circuitoId) => {
+          const normalizado = normalizarCircuito(circuitoId);
+          for (let key in datos[year].seccionales) {
+            if (normalizarCircuito(key) === normalizado) {
+              return { data: datos[year].seccionales[key], key: key };
+            }
+          }
+          return null;
+        };
+
+        useEffect(() => {
+          if (!mapContainer.current || !geojson || !datos) return;
+
+          // Crear mapa una sola vez
+          if (!map.current) {
+            map.current = L.map(mapContainer.current).setView(
+              [-31.42, -64.19],
+              12,
+            );
+
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+              attribution: "© OpenStreetMap",
+              maxZoom: 18,
+            }).addTo(map.current);
+          }
+
+          // Remover capa anterior
+          if (geoJsonLayer.current) {
+            map.current.removeLayer(geoJsonLayer.current);
+          }
+          if (labelsLayer.current) map.current.removeLayer(labelsLayer.current);
+          labelsLayer.current = L.layerGroup();
+          if (mostrarRotulos) labelsLayer.current.addTo(map.current);
+          const limitesSeccionales = new Map();
+
+          // Nueva capa GeoJSON
+          geoJsonLayer.current = L.geoJSON(geojson, {
+            style: (feature) => {
+              const resultado = encontrarSeccional(feature.properties.circuito);
+              const secc = resultado ? resultado.data : null;
+              const seccKey = resultado ? resultado.key : null;
+              const esSeleccionada = seccKey === seccionalSeleccionada;
+              const color = modo === "ganadores" ? obtenerColor(secc?.ganador) : colorSeccional(feature.properties.circuito);
+
+              return {
+                fillColor: color,
+                weight: esSeleccionada ? 4 : 1.5,
+                opacity: 1,
+                color: esSeleccionada ? "#111827" : color,
+                fillOpacity: modo === "ganadores" ? (esSeleccionada ? 0.48 : 0.3) : (esSeleccionada ? 0.19 : 0.1),
+              };
+            },
+            onEachFeature: (feature, layer) => {
+              const resultado = encontrarSeccional(feature.properties.circuito);
+              const grupo = seccionalDe(feature.properties.circuito);
+              if (grupo && layer.getBounds && layer.getBounds().isValid()) {
+                if (!limitesSeccionales.has(grupo))
+                  limitesSeccionales.set(grupo, L.latLngBounds([]));
+                limitesSeccionales.get(grupo).extend(layer.getBounds());
+              }
+
+              if (resultado) {
+                const { data: secc, key: seccKey } = resultado;
+
+                // Tooltip
+                const tooltip = document.createElement("span");
+                tooltip.textContent =
+                  nombreCircuito(seccKey, secc.nombre) +
+                  " · Seccional " +
+                  seccionalDe(seccKey) + (modo === "ganadores" ? " · " + secc.ganador : "");
+                layer.bindTooltip(tooltip, {
+                  permanent: false,
+                  direction: "top",
+                  className: "leaflet-tooltip",
+                });
+
+                // Click
+                layer.on("click", function () {
+                  onSeccionalSelect(seccKey);
+                });
+
+                // Hover
+                layer.on("mouseover", function () {
+                  this.setStyle({
+                    weight: 3,
+                    opacity: 1,
+                    fillOpacity: modo === "ganadores" ? 0.4 : 0.16,
+                  });
+                });
+
+                layer.on("mouseout", function () {
+                  geoJsonLayer.current.resetStyle(this);
+                });
+              }
+            },
+          }).addTo(map.current);
+          for (const [grupo, bounds] of limitesSeccionales) {
+            L.marker(bounds.getCenter(), {
+              interactive: false,
+              keyboard: false,
+              icon: L.divIcon({
+                className: "seccional-label",
+                html: "<span>Seccional " + grupo + "</span>",
+                iconSize: [100, 24],
+                iconAnchor: [50, 12],
+              }),
+            }).addTo(labelsLayer.current);
+          }
+        }, [geojson, datos, year, seccionalSeleccionada, modo, mostrarRotulos]);
+
+        const partidos = [...new Set(geojson.features.map(f => encontrarSeccional(f.properties.circuito)?.data.ganador || "Sin datos"))].sort();
+        const grupos = [
+          ...new Set(
+            geojson.features
+              .map((f) => seccionalDe(f.properties.circuito))
+              .filter(Boolean),
+          ),
+        ].sort((a, b) => Number(a) - Number(b));
+        return (
+          <>
+            <div id="map" ref={mapContainer}></div>
+            <div
+              className="flex flex-wrap gap-x-4 gap-y-2 pt-4 text-xs"
+              aria-label={modo === "ganadores" ? "Leyenda de partidos ganadores" : "Leyenda de seccionales"}
+            >
+              {(modo === "ganadores" ? partidos : grupos).map((grupo) => (
+                <span key={grupo} className="inline-flex items-center gap-2">
+                  <span
+                    style={{
+                      backgroundColor: modo === "ganadores" ? obtenerColor(grupo) : colorSeccional(grupo),
+                      width: 12,
+                      height: 12,
+                      borderRadius: 3,
+                    }}
+                  />
+                  {modo === "ganadores" ? grupo : "Seccional " + grupo}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {modo === "ganadores" ? "Cada circuito toma el color de su partido ganador. Hacé clic para consultar los resultados." : "Los colores identifican seccionales, no partidos. Los circuitos con el mismo número pertenecen a la misma seccional."}
+            </p>
+          </>
+        );
+      };
+
+      // ========== APP PRINCIPAL ==========
+
+      function ElectoralMapApp() {
+        const [datos, setDatos] = useState(null);
+        const [geojson, setGeojson] = useState(null);
+        const [year, setYear] = useState("2023");
+        const [vista, setVista] = useState("ganadores");
+        const [selecciones, setSelecciones] = useState({});
+        const [comparaciones, setComparaciones] = useState({});
+        const [mostrarRotulos, setMostrarRotulos] = useState(true);
+        const [orden, setOrden] = useState({campo:null, direccion:"desc"});
+        const [partidosFiltro, setPartidosFiltro] = useState([]);
+        const [errorCarga, setErrorCarga] = useState("");
+        const claveSeleccion = vista + ":" + year;
+        const seccionalSeleccionada = selecciones[claveSeleccion] || null;
+        const setSeccionalSeleccionada = id => setSelecciones(prev => ({...prev, [claveSeleccion]:id}));
+        const comparacion = comparaciones[year] || [null,null];
+        const cambiarComparacion = (indice,id) => setComparaciones(prev => {
+          const siguiente = [...(prev[year] || [null,null])];
+          siguiente[indice]=id;
+          return {...prev, [year]:siguiente};
+        });
+        const ordenar = campo => setOrden(prev => ({
+          campo, direccion:prev.campo === campo && prev.direccion === "desc" ? "asc" : "desc"
+        }));
+        const esMapa = vista === "ganadores";
+        const [editando, setEditando] = useState(false);
+        const [datosTemp, setDatosTemp] = useState(null);
+
+        useEffect(() => { setEditando(false); setDatosTemp(null); }, [vista, year]);
+
+        // Cargar datos
+        useEffect(() => {
+          Promise.all([
+            fetch("./datos_electorales.json").then((r) => { if(!r.ok) throw Error("No se pudo cargar datos_electorales.json"); return r.json(); }),
+            fetch("./mapa_seccionales.geojson").then((r) => { if(!r.ok) throw Error("No se pudo cargar mapa_seccionales.geojson"); return r.json(); }),
+          ])
+            .then(([d, g]) => {
+              if (!ANIOS.every(y => d[y]?.resultado_capital)) throw Error("Usá el JSON actualizado junto a este HTML: faltan resultados de Capital.");
+              setDatos(datosExportables(d));
+              setGeojson(g);
+            })
+            .catch((e) => { console.error("Error:", e); setErrorCarga(e.message); });
+        }, []);
+
+        if (errorCarga) return <div role="alert" className="p-8 text-center">{errorCarga} Abrí el HTML con Live Server y verificá que los dos JSON estén en la misma carpeta.</div>;
+        if (!datos || !geojson) {
+          return (
+            <div className="p-8 text-center text-white">Cargando mapa...</div>
+          );
+        }
+
+        const dataYear = datos[year];
+        const seccionales = dataYear.seccionales;
+        const capital = dataYear.resultado_capital;
+        const partidosTabla = [...new Set(Object.values(seccionales).map(s => s.ganador).filter(Boolean))]
+          .sort((a,b) => a.localeCompare(b, "es"));
+        const filasOrdenadas = ordenarCircuitos(seccionales, orden)
+          .filter(([,s]) => partidosFiltro.length === 0 || partidosFiltro.includes(s.ganador));
+        const secc = seccionalSeleccionada
+          ? seccionales[seccionalSeleccionada]
+          : null;
+
+        const guardarEdicion = () => {
+          setDatos((prev) => ({
+            ...prev,
+            [year]: {
+              ...prev[year],
+              seccionales: {
+                ...prev[year].seccionales,
+                [seccionalSeleccionada]: datosTemp,
+              },
+            },
+          }));
+          setEditando(false);
+        };
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-blue-800 p-6">
+            {/* HEADER */}
+            <div className="mb-6 text-center">
+              <h1 className="text-4xl font-bold text-white mb-2 italic">
+                Mapa electoral
+              </h1>
+              <p className="text-blue-100">Córdoba Capital</p>
+            </div>
+
+            {/* CONTROLES */}
+            <div className="flex gap-4 mb-6 flex-wrap">
+              <select
+                value={year}
+                onChange={(e) => {
+                  setYear(e.target.value);
+                  setPartidosFiltro([]);
+                }}
+                className="px-4 py-2 rounded-lg bg-white border-2 border-purple-300 font-bold"
+              >
+                <option value="2023">2023 - Gobernador</option>
+                <option value="2019">2019 - Gobernador</option>
+                <option value="2015">2015 - Gobernador</option>
+                <option value="2011">2011 - Gobernador</option>
+              </select>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setVista("ganadores")}
+                  className={`px-4 py-2 rounded-lg font-bold ${vista === "ganadores" ? "bg-white text-blue-900" : "bg-white/20 text-white hover:bg-white/30"}`}
+                >
+                  🏆 Ganadores
+                </button>
+                <button
+                  onClick={() => setVista("tabla")}
+                  className={`px-4 py-2 rounded-lg font-bold ${
+                    vista === "tabla"
+                      ? "bg-white text-blue-900"
+                      : "bg-white/20 text-white hover:bg-white/30"
+                  }`}
+                >
+                  📋 Tabla
+                </button>
+                <button
+                  onClick={() => setVista("comparador")}
+                  className={`px-4 py-2 rounded-lg font-bold ${
+                    vista === "comparador"
+                      ? "bg-white text-blue-900"
+                      : "bg-white/20 text-white hover:bg-white/30"
+                  }`}
+                >
+                  ⚖️ Comparar
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(datosExportables(datos), null, 2)], {
+                    type: "application/json",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "datos_electorales.json";
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+                className="px-4 py-2 rounded-lg bg-green-500 text-white font-bold hover:bg-green-600"
+              >
+                ⬇️ Exportar
+              </button>
+            </div>
+
+            {/* Resumen compacto: cuatro tarjetas, una por dato. */}
+            {vista !== "comparador" && (
+              <div className="mb-5" aria-label="Resultados totales de Córdoba Capital">
+                <p className="text-xs text-blue-100 mb-2">CÓRDOBA CAPITAL · {year} · Porcentajes de partidos sobre votos válidos</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  {[capital.primero, capital.segundo].map((p,i) => (
+                    <section key={i} className="rounded-lg bg-white/90 p-3 shadow border-l-4" style={{borderColor:obtenerColor(p.partido)}}>
+                      <p className="text-xs font-bold text-gray-500">{i+1}.º PUESTO</p>
+                      <p className="text-sm font-bold text-gray-900 leading-snug mt-1">{p.partido}</p>
+                      <p className="text-2xl font-bold mt-1" style={{color:obtenerColor(p.partido)}}>{porcentaje(p.porcentaje)}</p>
+                    </section>
+                  ))}
+                  <section className="rounded-lg bg-white/90 p-3 shadow border-l-4" style={{borderColor:"#7c3aed"}}>
+                    <p className="text-xs font-bold text-gray-500">PARTICIPACIÓN</p>
+                    <p className="text-2xl font-bold mt-2" style={{color:"#7c3aed"}}>{porcentaje(capital.participacion*100)}</p>
+                  </section>
+                  <section className="rounded-lg bg-white/90 p-3 shadow border-l-4" style={{borderColor:"#0f766e"}}>
+                    <p className="text-xs font-bold text-gray-500">MESAS</p>
+                    <p className="text-2xl font-bold mt-2" style={{color:"#0f766e"}}>{numero(capital.mesas)}</p>
+                  </section>
+                </div>
+              </div>
+            )}
+
+            {/* CONTENIDO */}
+            <div className={esMapa ? "grid grid-cols-1 xl:grid-cols-3 gap-6 items-start" : "grid grid-cols-1 gap-6"}>
+              <div className={esMapa ? "xl:col-span-2 min-w-0" : "min-w-0"}>
+                {vista === "ganadores" && (
+                  <div className="bg-white p-4 rounded-lg shadow">
+                    <h2 className="font-bold text-gray-800 mb-3">{"Ganadores por circuito · " + year}</h2>
+                    <button className="mb-3 px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-100" aria-pressed={!mostrarRotulos} onClick={() => setMostrarRotulos(prev => !prev)}>{mostrarRotulos ? "Ocultar rótulos" : "Mostrar rótulos"}</button>
+                    <MapComponent
+                      mostrarRotulos={mostrarRotulos}
+                      modo="ganadores"
+                      geojson={geojson}
+                      datos={datos}
+                      year={year}
+                      seccionalSeleccionada={seccionalSeleccionada}
+                      onSeccionalSelect={setSeccionalSeleccionada}
+                    />
+                    <p className="text-xs text-gray-600 mt-2">
+                      Hacé clic en un circuito para ver sus resultados.
+                    </p>
+                  </div>
+                )}
+
+                {vista === "tabla" && (
+                  <div className="bg-white rounded-lg shadow overflow-x-auto">
+                    <div className="flex flex-wrap items-end justify-between gap-3 p-3 border-b">
+                      <fieldset className="flex-1 min-w-0">
+                        <legend className="text-xs font-bold text-gray-600 mb-2">Partidos ganadores · elegí hasta dos</legend>
+                        <div className="flex flex-wrap gap-2">
+                          {partidosTabla.map(partido => (
+                            <label key={partido} className="flex items-center gap-2 border rounded-lg px-3 py-2 text-xs cursor-pointer">
+                              <input type="checkbox" value={partido} checked={partidosFiltro.includes(partido)}
+                                disabled={partidosFiltro.length >= 2 && !partidosFiltro.includes(partido)}
+                                onChange={e => {
+                                  const checked = e.target.checked;
+                                  setPartidosFiltro(prev => checked ? (prev.includes(partido) || prev.length >= 2 ? prev : [...prev, partido]) : prev.filter(p => p !== partido));
+                                }} />
+                              <span className="w-3 h-3 rounded shrink-0" style={{backgroundColor:obtenerColor(partido)}} />
+                              {partido}
+                            </label>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">Sin selección se muestran todos los circuitos.</p>
+                      </fieldset>
+                      <span className="text-xs text-gray-500" aria-live="polite">{filasOrdenadas.length} circuitos</span>
+                      <button className="text-sm rounded-lg border px-3 py-2 hover:bg-gray-100" onClick={() => {setOrden({campo:null,direccion:"desc"});setPartidosFiltro([]);setSeccionalSeleccionada(null);}}>Restablecer</button>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-100 border-b">
+                        <tr>
+                          <th className="p-2 text-left">Seccional</th>
+                          <EncabezadoOrdenable campo="participacion" titulo="Participación" orden={orden} ordenar={ordenar} />
+                          <th className="p-2 text-left">Ganador</th>
+                          <EncabezadoOrdenable campo="margen_victoria" titulo="Margen de Victoria" orden={orden} ordenar={ordenar} />
+                          <EncabezadoOrdenable campo="mesas" titulo="Mesas" orden={orden} ordenar={ordenar} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filasOrdenadas.map(([id, s]) => (
+                          <tr
+                            key={id}
+                            className={`border-b hover:bg-gray-50 cursor-pointer ${
+                              seccionalSeleccionada === id ? "bg-blue-100" : ""
+                            }`}
+                            onClick={() => setSeccionalSeleccionada(id)}
+                          >
+                            <td className="p-2 font-bold">
+                              {nombreCircuito(id, s.nombre)}
+                              <div className="text-xs font-normal text-gray-500">
+                                Seccional {seccionalDe(id) || "sin identificar"}
+                              </div>
+                            </td>
+                            <td className="p-2 text-right">
+                              {(s.participacion * 100).toFixed(1)}%
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-3 h-3 rounded"
+                                  style={{
+                                    backgroundColor: obtenerColor(s.ganador),
+                                  }}
+                                />
+                                <span className="text-xs">
+                                  {s.ganador}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="p-2 text-right">
+                              {s.margen_victoria.toFixed(1)}%
+                            </td>
+                            <td className="p-2 text-right">{s.mesas}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {vista === "comparador" && (
+                  <ComparadorSeccionales
+                    datos={datos}
+                    year={year}
+                    seccionales={seccionales}
+                    secc1Id={comparacion[0]}
+                    secc2Id={comparacion[1]}
+                    setSecc1Id={id => cambiarComparacion(0,id)}
+                    setSecc2Id={id => cambiarComparacion(1,id)}
+                  />
+                )}
+              </div>
+
+              {/* PANEL LATERAL: sólo en mapas, con selección propia por vista y año. */}
+              {esMapa && <div className="xl:sticky xl:top-6">
+                {secc ? (
+                  <div className="bg-white p-6 rounded-lg shadow max-h-[68vh] overflow-y-auto">
+                    <div className="flex justify-between items-center mb-4">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-blue-700 mb-1">
+                          Resultados electorales
+                        </p>
+                        <h3 className="font-bold text-lg">
+                          {nombreCircuito(seccionalSeleccionada, secc.nombre)}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          Seccional {seccionalDe(seccionalSeleccionada)} ·
+                          Resultados del circuito seleccionado
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSeccionalSeleccionada(null);
+                          setEditando(false);
+                        }}
+                        className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold"
+                        aria-label="Cerrar resultados"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {!editando ? (
+                      <>
+                        <div className="grid grid-cols-3 gap-3 mb-6">
+                          <div className="bg-gray-50 p-3 rounded">
+                            <div className="text-xs text-gray-600">
+                              Participación (%)
+                            </div>
+                            <div className="text-xl font-bold text-green-600">
+                              {(secc.participacion * 100).toFixed(1)}%
+                            </div>
+                          </div>
+                          <div className="bg-gray-50 p-3 rounded">
+                            <div className="text-xs text-gray-600">Mesas</div>
+                            <div className="text-xl font-bold">
+                              {secc.mesas}
+                            </div>
+                          </div>
+                          <div className="bg-gray-50 p-3 rounded">
+                            <div className="text-xs text-gray-600">
+                              Margen de Victoria
+                            </div>
+                            <div className="text-xl font-bold text-orange-600">
+                              {secc.margen_victoria.toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mb-6">
+                          <h4 className="font-bold text-sm mb-3">RESULTADOS</h4>
+                          {secc.top3.map((p, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center gap-2 mb-2"
+                            >
+                              <div
+                                className="w-4 h-4 rounded"
+                                style={{
+                                  backgroundColor: obtenerColor(p.partido),
+                                }}
+                              />
+                              <div className="flex-1 text-xs">
+                                <div className="font-bold">{p.partido}</div>
+                                <div className="w-full bg-gray-200 rounded-full h-1">
+                                  <div
+                                    className="h-1 rounded-full"
+                                    style={{
+                                      width: `${p.pct}%`,
+                                      backgroundColor: obtenerColor(p.partido),
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div className="text-xs font-bold">
+                                {p.pct.toFixed(1)}%
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-xs font-bold">
+                              Participación (%)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={(datosTemp.participacion * 100).toFixed(2)}
+                              onChange={(e) =>
+                                setDatosTemp({
+                                  ...datosTemp,
+                                  participacion:
+                                    parseFloat(e.target.value) / 100,
+                                })
+                              }
+                              className="w-full border p-2 rounded mt-1"
+                            />
+                          </div>
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              onClick={guardarEdicion}
+                              className="flex-1 bg-green-600 text-white p-2 rounded hover:bg-green-700 text-sm"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              onClick={() => setEditando(false)}
+                              className="flex-1 bg-gray-400 text-white p-2 rounded hover:bg-gray-500 text-sm"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-white p-8 rounded-lg shadow text-center text-gray-500 border-2 border-dashed border-gray-200">
+                    <div className="text-3xl mb-3">↖</div>
+                    <p className="font-bold text-gray-700">
+                      Elegí un circuito
+                    </p>
+                    <p className="text-sm mt-1">
+                      Hacé clic sobre el mapa para ver sus resultados.
+                    </p>
+                  </div>
+                )}
+              </div>}
+            </div>
+
+            {/* FOOTER */}
+            <div className="text-center text-white/60 text-xs mt-6">
+              <p>
+                📊 Mapa interactivo con Leaflet - Córdoba · Gobernador 2011–2023
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      // ========== VISTA COMPARADOR ==========
+
+      const ComparadorSeccionales = ({ datos, year, seccionales, secc1Id, secc2Id, setSecc1Id, setSecc2Id }) => {
+
+        const secc1 = secc1Id ? seccionales[secc1Id] : null;
+        const secc2 = secc2Id ? seccionales[secc2Id] : null;
+
+        if (!secc1 || !secc2) {
+          return (
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h3 className="font-bold text-lg mb-4">Comparar Seccionales</h3>
+              <p className="text-gray-600 mb-4">
+                Selecciona 2 seccionales para compararlas:
+              </p>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-600">
+                    Seccional 1
+                  </label>
+                  <select
+                    value={secc1Id || ""}
+                    onChange={(e) => setSecc1Id(e.target.value)}
+                    className="w-full border p-2 rounded mt-1"
+                  >
+                    <option value="">-- Selecciona --</option>
+                    {Object.entries(seccionales).map(([id, s]) => (
+                      <option key={id} value={id}>
+                        {nombreCircuito(id, s.nombre)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-gray-600">
+                    Seccional 2
+                  </label>
+                  <select
+                    value={secc2Id || ""}
+                    onChange={(e) => setSecc2Id(e.target.value)}
+                    className="w-full border p-2 rounded mt-1"
+                  >
+                    <option value="">-- Selecciona --</option>
+                    {Object.entries(seccionales).map(([id, s]) => (
+                      <option key={id} value={id}>
+                        {nombreCircuito(id, s.nombre)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-gray-500">Selecciona ambas para ver la comparación</p>
+                <button className="text-sm rounded-lg border px-3 py-2 hover:bg-gray-100" onClick={() => {setSecc1Id(null);setSecc2Id(null);}}>Restablecer</button>
+              </div>
+            </div>
+          );
+        }
+
+        // La comparación usa los porcentajes de los circuitos seleccionados.
+
+        return (
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-bold text-lg">
+                Comparación: {secc1.nombre} vs {secc2.nombre}
+              </h3>
+              <button
+                onClick={() => {
+                  setSecc1Id(null);
+                  setSecc2Id(null);
+                }}
+                className="text-sm bg-gray-300 text-gray-800 px-3 py-1 rounded hover:bg-gray-400"
+              >
+                Restablecer
+              </button>
+            </div>
+
+            {/* TOP 3 LADO A LADO */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div>
+                <h4 className="font-bold text-sm mb-3">{secc1.nombre}</h4>
+                <div className="space-y-2">
+                  {secc1.top3.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded shrink-0"
+                        style={{ backgroundColor: obtenerColor(p.partido) }}
+                      />
+                      <div className="flex-1 min-w-0 flex justify-between items-start gap-3 text-xs">
+                        <span className="font-bold whitespace-normal break-words min-w-0">
+                          {p.partido}
+                        </span>
+                        <span className="font-bold shrink-0">
+                          {p.pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-sm mb-3">{secc2.nombre}</h4>
+                <div className="space-y-2">
+                  {secc2.top3.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded shrink-0"
+                        style={{ backgroundColor: obtenerColor(p.partido) }}
+                      />
+                      <div className="flex-1 min-w-0 flex justify-between items-start gap-3 text-xs">
+                        <span className="font-bold whitespace-normal break-words min-w-0">
+                          {p.partido}
+                        </span>
+                        <span className="font-bold shrink-0">
+                          {p.pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* TABLA COMPARATIVA */}
+            <div className="overflow-x-auto">
+              <table className="w-full table-fixed text-xs">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="p-2 text-left">Métrica</th>
+                    <th className="p-2 text-center">{secc1.nombre}</th>
+                    <th className="p-2 text-center">Diferencia</th>
+                    <th className="p-2 text-center">{secc2.nombre}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b">
+                    <td className="p-2 font-bold">Participación</td>
+                    <td className="p-2 text-center">
+                      {(secc1.participacion * 100).toFixed(1)}%
+                    </td>
+                    <td className="p-2 text-center text-blue-600 font-bold">
+                      {(
+                        (secc1.participacion - secc2.participacion) *
+                        100
+                      ).toFixed(1)}
+                      %
+                    </td>
+                    <td className="p-2 text-center">
+                      {(secc2.participacion * 100).toFixed(1)}%
+                    </td>
+                  </tr>
+                  <tr className="border-b">
+                    <td className="p-2 font-bold">Ganador</td>
+                    <td className="p-2 text-center text-xs whitespace-normal break-words">
+                      {secc1.ganador}
+                    </td>
+                    <td className="p-2 text-center">-</td>
+                    <td className="p-2 text-center text-xs whitespace-normal break-words">
+                      {secc2.ganador}
+                    </td>
+                  </tr>
+                  <tr className="border-b">
+                    <td className="p-2 font-bold">Votos Ganador</td>
+                    <td className="p-2 text-center">{secc1.votos_ganador}</td>
+                    <td className="p-2 text-center text-blue-600 font-bold">
+                      {secc1.votos_ganador - secc2.votos_ganador}
+                    </td>
+                    <td className="p-2 text-center">{secc2.votos_ganador}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      };
+
+      // Renderizar
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<ElectoralMapApp />);
+    </script>
+  </body>
+</html>
